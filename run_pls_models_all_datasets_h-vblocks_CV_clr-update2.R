@@ -12,6 +12,12 @@ library(mixOmics)   # sPLS backend
 library(future)
 
 # ----------------FUNCTIONS-----------------
+
+# --- Patch for plsmod mixOmics bug ("incorrect number of dimensions")
+fix_multi_numeric_preds <- dget("./custom-functions/fix_multi_numeric_preds.R")
+# Register the patch in the main session
+assignInNamespace("multi_numeric_preds", fix_multi_numeric_preds, ns = "plsmod")
+
 ## UPDATED VERSION 17 SEP 2025 to introduce randomness into the test window splitting (and get mean values for repeated test fitting)
 # To mitigate sensitivity to a specific test-window placement, we introduced stochastic tie-breaking into the variance-balanced window selection.
 # When multiple candidate windows exhibited variance close to the median, one was selected at random (with fixed seeds for reproducibility).
@@ -82,13 +88,13 @@ data_files <- list(
 )
 
 
-#outcomes <- c("A", "T", "DN", "T2", "C",
-#              "C2", "H", "H2",
-#              "V", "V2")  # Change these to your actual response variable names
+outcomes <- c("A", "T", "DN", "T2", "C",
+              "C2", "H", "H2",
+              "V", "V2")  # Change these to your actual response variable names
 
-outcomes <- c("A_roll6", "T_roll6", "DNA_g_kgVS_roll6", "T2_roll6", "C_roll6",
-              "C2_roll6", "H_roll6", "H2_roll6",
-              "V_roll6", "V2_roll6")  # Change these to your actual response variable names
+#outcomes <- c("A_roll6", "T_roll6", "DNA_g_kgVS_roll6", "T2_roll6", "C_roll6",
+#              "C2_roll6", "H_roll6", "H2_roll6",
+#              "V_roll6", "V2_roll6")  # Change these to your actual response variable names
 
 #outcomes <- c(
 #   'h2__hydrogenotrophic_methanogens_roll6', "su__sugar_degraders_fermenters_roll6", "aa__amino_acid_degraders_roll6",
@@ -123,18 +129,19 @@ for (data_name in names(data_files)) {
   df <- read.csv(dataset_path)
 
   library(zoo)
-  # rolling window means if needed
- df <- df %>%
-    arrange(Digester, Sample_Date) %>%   # sort within each group
-    group_by(Digester) %>%               # group by digester (or other variable)
-    mutate(across(
-      where(is.numeric) & !all_of("Sample_Date") & !contains("_otu"),
-      ~ rollapply(.x, width = 6, FUN = mean,
-                  align = "right", fill = NA, na.rm = TRUE),
-      .names = "{.col}_roll6"
-    )) %>%
-    ungroup() %>%  # Keep only group/date + rolled columns
-    dplyr::select(Digester, Sample_Date, ends_with("_roll6"),contains("_otu"))
+  # for numerical responses only (not for OTU abundance predictors) create a 6-day rolling average
+  # A 6-day sample window approximates the sludge turnover in the digesters (2 weeks).
+# df <- df %>%
+#    arrange(Digester, Sample_Date) %>%   # sort within each group
+#    group_by(Digester) %>%               # group by digester (or other variable)
+#    mutate(across(
+#      where(is.numeric) & !all_of("Sample_Date") & !contains("_otu"),  # if numeric but not for otu-labeled columns apply the rollapply function
+#      ~ rollapply(.x, width = 6, FUN = mean,                  # take the mean of 6 samples in each selected column
+#                  align = "right", fill = NA, na.rm = TRUE),  # right aligned = no future leakage future leakage
+#      .names = "{.col}_roll6"
+#    )) %>%
+#    ungroup() %>%
+#    dplyr::select(Digester, Sample_Date, ends_with("_roll6"),contains("_otu")) # Keep only group/date + rolled columns
 
   # Auto-detect OTU cols for this dataset
   otu_cols <- grep("_otu$|FLASV", colnames(df), value = TRUE)
@@ -219,7 +226,7 @@ for (data_name in names(data_files)) {
 
       grid <- grid_regular(
         num_comp(range = c(2L, 20L)),
-        predictor_prop(range = c(0.2, 1.0)),
+        predictor_prop(range = c(0.6, 1.0)),
         levels = 8
       )
 
