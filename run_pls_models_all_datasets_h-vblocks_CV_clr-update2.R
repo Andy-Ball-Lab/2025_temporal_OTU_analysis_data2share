@@ -112,7 +112,23 @@ id_col    <- "Digester"
 time_col  <- "Sample_Date"
 
 plan(multisession, workers = parallel::detectCores() - 1)
-
+# send the fix to all active workers via futures
+invisible(
+  future.apply::future_lapply(
+    1:future::nbrOfWorkers(),
+    function(i) {
+      library(plsmod)
+      assignInNamespace(
+        "multi_numeric_preds",
+        fix_multi_numeric_preds,
+        ns = "plsmod"
+      )
+      message("✅ plsmod patched on worker ", i)
+      TRUE
+    },
+    future.globals = list(fix_multi_numeric_preds = fix_multi_numeric_preds)
+  )
+)
 # Parameters
 n_repeats   <- 10   # how many different test-window selections
 assess_len  <- 12   # length of test/CV window
