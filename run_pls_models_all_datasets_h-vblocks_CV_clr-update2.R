@@ -20,6 +20,9 @@ library(future)
 
 
 choose_random_windows <- function(df, outcome, assess, n_windows = 2, seed = NULL) {
+  # assess = number of consecutive samples per test window
+  # n_windows = how many test windows to select
+
   if (!is.null(seed)) set.seed(seed)
 
   n <- nrow(df)
@@ -216,7 +219,7 @@ for (data_name in names(data_files)) {
 
       grid <- grid_regular(
         num_comp(range = c(2L, 20L)),
-        predictor_prop(range = c(0.6, 1.0)),
+        predictor_prop(range = c(0.2, 1.0)),
         levels = 8
       )
 
