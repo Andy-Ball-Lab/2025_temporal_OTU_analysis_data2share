@@ -1,0 +1,28 @@
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# RStudio project files
+.Rproj.user/
+*.Rproj
+.Rhistory
+.RData
+.Ruserdata
+
+# Quarto / R Markdown
+*_cache/
+_cache/
+*.utf8.md
+*.knit.md
+*.html
+
+# renv
+renv/library/
+renv/staging/
+
+# Other temporary or local data
+*.log
+*.tmp
+*.bak
