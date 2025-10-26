@@ -18,11 +18,7 @@ fix_multi_numeric_preds <- dget("./custom-functions/fix_multi_numeric_preds.R")
 # Register the patch in the main session
 assignInNamespace("multi_numeric_preds", fix_multi_numeric_preds, ns = "plsmod")
 
-## UPDATED VERSION 17 SEP 2025 to introduce randomness into the test window splitting (and get mean values for repeated test fitting)
-# To mitigate sensitivity to a specific test-window placement, we introduced stochastic tie-breaking into the variance-balanced window selection.
-# When multiple candidate windows exhibited variance close to the median, one was selected at random (with fixed seeds for reproducibility).
-# This ensured that evaluation results were not overly dependent on a single deterministic choice of test windows,
-# thereby providing a more robust assessment of model generalizability across temporal contexts.
+# UPDATE: RANDOM WINDOWS
 
 choose_random_windows <- function(df, outcome, assess, n_windows = 2, seed = NULL) {
   # assess = number of consecutive samples per test window
@@ -92,9 +88,10 @@ data_files <- list(
 )
 
 
-outcomes <- c("A", "T", "DN", "T2", "C",
-              "C2", "H", "H2",
-              "V", "V2")  # Change these to your actual response variable names
+outcomes <- c("T1", "B", "A", "O", "AA", "V", "TP", "JaccardAD1AD2", "P", "H", "C", "V3", "C3","DNA_g_kgTS",
+             # "T2", "C2", "H2",
+              #"V", "V2"
+             )  # Change these to your actual response variable names
 
 #outcomes <- c("A_roll6", "T_roll6", "DNA_g_kgVS_roll6", "T2_roll6", "C_roll6",
 #              "C2_roll6", "H_roll6", "H2_roll6",
