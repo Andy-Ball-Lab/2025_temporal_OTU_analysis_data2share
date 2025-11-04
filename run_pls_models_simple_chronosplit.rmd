@@ -7,6 +7,132 @@ editor_options:
 
 # Minimal, PLS pipeline with per-digester time splits
 
+## Functions
+```{r}
+
+# --- Patch for plsmod mixOmics bug ("incorrect number of dimensions")
+# see https://github.com/tidymodels/plsmod/issues/47 (unanswered at time of writing this)
+fix_multi_numeric_preds <- dget("./custom-functions/fix_multi_numeric_preds.R")
+# Register the patch in the main session
+assignInNamespace("multi_numeric_preds", fix_multi_numeric_preds, ns = "plsmod")
+
+# ------ OTHER USER FUNCTIONS
+# Simple taxa prevalence overview. 
+myprevtable <- dget("./custom-functions/myprevalencetablefunction.R")
+# Ampvis to phyloseq
+amp2phyloseq <- function(amp) {
+  if (!requireNamespace("phyloseq", quietly = TRUE)) {
+    stop("The 'phyloseq' package must be installed to use this function.")
+  }
+
+  # Extract components
+  otutab <- rownames_to_column(amp$abund, var = "ID") %>% as_tibble() %>%  column_to_rownames("ID")
+  meta <- rownames_to_column(amp$metadata, var = "ID") %>% as_tibble() %>%  column_to_rownames("ID")
+  tax <- rownames_to_column(amp$tax, var = "ID") %>% as_tibble() %>%  column_to_rownames("ID") 
+
+  # Validate components
+  if (is.null(otutab) || is.null(meta)) {
+    stop("The ampvis2 object must contain both 'abund' and 'metadata'.")
+  }
+    ps <- phyloseq::phyloseq(
+    otu_table(otutab, taxa_are_rows = TRUE), 
+    sample_data(meta), 
+     tax_table(as.matrix(tax)) 
+                                     )
+  return(ps)
+}
+
+## Convert ps to amp
+phyloseq2amp <- function(ps) {
+  if (!requireNamespace("phyloseq", quietly = TRUE)) {
+    stop("The 'phyloseq' package must be installed.")
+  }
+
+  # Extract OTU table
+  otu <- as.data.frame(phyloseq::otu_table(ps))
+  if (!phyloseq::taxa_are_rows(ps)) {
+    otu <- t(otu)
+  }
+  otu <- tibble::rownames_to_column(otu, var = "OTU")
+
+  # Extract sample metadata
+  metadata <- data.frame(phyloseq::sample_data(ps))
+  if (!"SampleID" %in% colnames(metadata)) {
+  metadata <- tibble::rownames_to_column(metadata, var = "SampleID")
+  metadata <-  metadata %>% dplyr::relocate(SampleID, .before = 1)
+}
+
+  # Extract taxonomy table (if available)
+   if (!is.null(phyloseq::tax_table(ps, errorIfNULL = FALSE))) {
+  tax <- as.data.frame(phyloseq::tax_table(ps))
+  
+  if (!"OTU" %in% colnames(tax)) {
+    tax <- tibble::rownames_to_column(tax, var = "OTU")
+  }
+  
+  tax <- dplyr::relocate(tax, OTU, .before = 1)
+} else {
+  tax <- NULL
+}
+  
+  # Create ampvis2 object
+  amp <- ampvis2::amp_load(otutable = otu, metadata = metadata, taxonomy = tax)
+
+  return(amp)
+}
+
+
+rename_taxa_with_levels <- function(ps, taxa_add = c("Phylum", "Family"), rename_taxa = "Species") {
+  # Extract taxonomy table
+  tax <- as.data.frame(tax_table(ps))
+  
+  # Remove prefixes like p__, f__, g__, s__
+  clean_taxon <- function(x) {
+    gsub("^[a-z]__+", "", x)
+  }
+  
+  tax[] <- lapply(tax, function(col) clean_taxon(as.character(col)))
+  
+  # Ensure rename_taxa is not also in taxa_add
+  taxa_add <- setdiff(taxa_add, rename_taxa)
+  
+  # Ensure requested levels exist in the taxonomy
+  all_levels <- c(taxa_add, rename_taxa)
+  missing_levels <- setdiff(all_levels, colnames(tax))
+  if (length(missing_levels) > 0) {
+    stop(paste("Missing taxonomic levels:", paste(missing_levels, collapse = ", ")))
+  }
+  
+  # Create new label: prepend taxa_add levels to rename_taxa
+  tax[[rename_taxa]] <- apply(tax[, c(taxa_add, rename_taxa)], 1, function(row) {
+    if (any(is.na(row))) return(NA_character_)
+    paste(row, collapse = "; ")
+  })
+  
+  # Update the taxonomy in phyloseq object
+  tax_table(ps) <- tax_table(as.matrix(tax))
+  
+  return(ps)
+}
+
+
+
+# Which columns are predictors?
+# If your table uses OTU/FLASV names, this default selects them automatically.
+predictor_selector <- function(data) {
+  otu <- grep("_otu$|FLASV", names(data), value = TRUE)
+  if (length(otu) == 0) {
+    # fallback: all numeric predictors except id/time/outcome
+    setdiff(names(data)[vapply(data, is.numeric, logical(1))],
+            c(id_col, time_col, outcome))
+  } else {
+    otu
+  }
+}
+
+```
+
+## Model
 ```{r}
 
 # ------------------------------------------------------------
@@ -56,20 +182,8 @@ df$Sample_Date   <-  lubridate::as_date(df$Sample_Date)
 
 id_col   <- "Digester"
 time_col <- "Sample_Date"
-outcome  <- "A"   # change as needed
-
-# Which columns are predictors?
-# If your table uses OTU/FLASV names, this default selects them automatically.
-predictor_selector <- function(data) {
-  otu <- grep("_otu$|FLASV", names(data), value = TRUE)
-  if (length(otu) == 0) {
-    # fallback: all numeric predictors except id/time/outcome
-    setdiff(names(data)[vapply(data, is.numeric, logical(1))],
-            c(id_col, time_col, outcome))
-  } else {
-    otu
-  }
-}
+outcome  <- "V"   # change as needed
+outcome_name <- c("V") # for figure legend
 
 # CV settings (on the TRAINING set only)
 initial_prop <- 0.70   # first 60% of each digester's training rows start the rolling window
@@ -77,7 +191,7 @@ assess_n     <- 4      # assessment block size
 n_windows_id <- 5       # number of tail blocks per digester
 
 # Tuning grid size
-n_levels <- 5          # modest grid to keep it simple
+n_levels <- 10          # grid
 
 
 # --------------------- HELPER FUNCTIONS ----------------------
@@ -200,18 +314,39 @@ metric_set_cv  <- metric_set(rmse, mape)      # tune on stable metrics
 metric_set_all <- metric_set(rmse, mape, rsq) # report including rsq
 
 # ---------------------- MAIN WORKFLOW ------------------------
-stopifnot(all(c(id_col, time_col, outcome) %in% names(df)))
 
-df <- df %>%
-  dplyr::arrange(.data[[id_col]], .data[[time_col]]) %>%
-  tidyr::drop_na(dplyr::all_of(c(id_col, time_col, outcome)))
 
 pred_cols <- predictor_selector(df)
 stopifnot(length(pred_cols) > 0)
 
 df_mod <- df %>%
   dplyr::select(dplyr::all_of(c(id_col, time_col, outcome, pred_cols))) %>%
-  dplyr::arrange(.data[[id_col]], .data[[time_col]])
+  dplyr::arrange(.data[[id_col]], .data[[time_col]]) %>% 
+  tidyr::drop_na(dplyr::all_of(c(id_col, time_col, outcome)))
+
+## Create a rolling average, right-aligned
+df_mod <- df_mod %>%  
+  # Un"roll" to df_mod if the df_mod should contain the rolled means 
+  arrange(Digester, Sample_Date) %>%     # sort by digester and date
+  group_by(Digester) %>%                 # group per digester
+  mutate(
+    # dynamically create a new column name: "<outcome>_roll6"
+    "{outcome}" := zoo::rollapply(
+      .data[[outcome]],                  # dynamically reference the column
+      width = 6,                         # 6-sample rolling window
+      FUN = function(v) mean(v, na.rm = FALSE),
+      align = "right", fill = NA
+    )
+  ) %>%
+  ungroup() %>%  # Keep only group/date + rolled columns
+  dplyr::select(Digester, 
+                Sample_Date, 
+                !!outcome,  # select this for raw response values
+                contains("_otu")
+                ) %>% 
+  drop_na()
+
+stopifnot(all(c(id_col, time_col, outcome) %in% names(df_mod)))
 
 # 85/15 split per digester
 df_split <- make_train_test_85_15(df_mod, id_col, time_col)
@@ -236,7 +371,9 @@ resamps <- make_tail_only_cv(
 )
 
 # Recipe & model
-rec <- recipes::recipe(stats::as.formula(glue("`{outcome}` ~ .")), data = train_dat) %>%
+form <- stats::as.formula(paste0("`", outcome, "` ~ ."))
+
+rec <- recipes::recipe(form, data = train_dat) %>%
   recipes::update_role(dplyr::all_of(id_col),   new_role = "id") %>%
   recipes::update_role(dplyr::all_of(time_col), new_role = "time") %>%
   recipes::step_zv(recipes::all_predictors()) %>%
@@ -319,8 +456,9 @@ p <- # Real (black line)
              aes(x = .data[[time_col]], y = .pred, color = "Test prediction"),
              alpha = 0.9, size = 1.2) +
 
-  facet_wrap(vars(.data[[id_col]]), scales = "free_x", nrow = 2) +
-  labs(x = time_col, y = outcome, color = NULL) +
+  facet_wrap(vars(.data[[id_col]]), scales = "fixed", nrow = 2) +
+ # labs(x = time_col, y = outcome, color = NULL) +
+    labs(x = time_col, y = outcome_name , color = NULL) +
   scale_color_manual(
     values = c(
       "Real" = "black",
@@ -339,11 +477,21 @@ p <- # Real (black line)
 
 print(p)
 
+
 # Real values plotted against predictions with linear regression lines added
 rsq_tbl <- rsq(test_preds, truth = truth, estimate = .pred)
+# rsq_tbl_trad <- rsq_trad(test_preds, truth = truth, estimate = .pred)
+
+# R2 1:1
+# Fit the regression model of truth vs predictions
+lm_fit <- lm(truth ~ .pred, data = test_preds)
+# Residual sum of squares from regression model
+SSE_reg <- sum(resid(lm_fit)^2)
+# Residual sum of squares from 1:1 (slope = 1, intercept = 0)
 SSE_11 <- sum((test_preds$truth - test_preds$.pred)^2)
-SST    <- sum((test_preds$truth - mean(test_preds$truth))^2)
-r2_11  <- 1 - SSE_11 / SST
+# Compute R²₁:₁ as defined
+r2_11 <- 1 - SSE_reg / SSE_11
+
 df_pred <- test_preds %>% rename(Real = truth, Prediction = .pred)
 
 fmt <- function(x) formatC(x, digits = 2, format = "f")
@@ -361,10 +509,10 @@ p2 <- ggplot(df_pred, aes(Prediction, Real)) +
   geom_abline(slope = 1, intercept = 0, color = "black") +
   annotate("text", x = x_annot, y = y_annot,
            label = lab_r2, parse = TRUE, hjust = 0, vjust = 1,
-           size = 4.5, color = "green4") +
+           size = 4, color = "green4") +
   annotate("text", x = x_annot, y = y_annot - dy,
            label = lab_r2_11, parse = TRUE, hjust = 0, vjust = 1,
-           size = 4.5, color = "black") +
+           size = 4, color = "black") +
   # Digester label (top-left corner)
   annotate("text",
            x = xr[1] + 0.02 * diff(xr),
@@ -374,7 +522,7 @@ p2 <- ggplot(df_pred, aes(Prediction, Real)) +
            size = 3, fontface = "bold") +
   labs(x = "Prediction", y = "Real")
   #theme_minimal(base_size = 12)
-p2
+
 
 blank <- ggplot() + theme_void()  # empty spacer
 g1 <- ggpubr::ggarrange(
@@ -384,13 +532,18 @@ g1 <- ggpubr::ggarrange(
     ncol = 1,
     heights = c(1, 2, 1)     # adjust middle value (2) to control centering
   ),
-  widths = c(0.6, 0.4)
+  widths = c(0.65, 0.35)
 )
+g1
+#ggsave(plot = g1, "./Figures/chronosplit_modeleval_alkalinity.png", width = 20, height = 12, units = "cm")
+ggsave(plot = g1, 
+       filename = paste0("./Figures/chronosplit_modeleval_", outcome, ".png"),
+       width = 20, height = 10, units = "cm")
 
-ggsave(plot = g1, "./Figures/chronosplit_modeleval_alkalinity.png", width = 20, height = 12, units = "cm")
 # Optional saves:
 # readr::write_csv(summary_tbl, "summary_metrics_cv_test.csv")
 # readr::write_csv(pred_all,    "predictions_train_test.csv")
+
 
 ```
 
