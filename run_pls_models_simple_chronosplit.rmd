@@ -7,7 +7,7 @@ editor_options:
 
 # Minimal, PLS pipeline with per-digester time splits
 
-## Functions
+## General Functions
 ```{r}
 
 # --- Patch for plsmod mixOmics bug ("incorrect number of dimensions")
@@ -482,6 +482,7 @@ print(p)
 rsq_tbl <- rsq(test_preds, truth = truth, estimate = .pred)
 # rsq_tbl_trad <- rsq_trad(test_preds, truth = truth, estimate = .pred)
 
+df_pred <- test_preds %>% rename(Real = truth, Prediction = .pred)
 fmt <- function(x) formatC(x, digits = 2, format = "f")
 lab_r2    <- paste0('R^2 == ', fmt(rsq_tbl$.estimate))
 
@@ -498,9 +499,6 @@ p2 <- ggplot(df_pred, aes(Prediction, Real)) +
   annotate("text", x = x_annot, y = y_annot,
            label = lab_r2, parse = TRUE, hjust = 0, vjust = 1,
            size = 4, color = "green4") +
-  annotate("text", x = x_annot, y = y_annot - dy,
-           label = lab_r2_11, parse = TRUE, hjust = 0, vjust = 1,
-           size = 4, color = "black") +
   # Digester label (top-left corner)
   annotate("text",
            x = xr[1] + 0.02 * diff(xr),
