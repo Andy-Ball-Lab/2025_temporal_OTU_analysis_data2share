@@ -482,21 +482,9 @@ print(p)
 rsq_tbl <- rsq(test_preds, truth = truth, estimate = .pred)
 # rsq_tbl_trad <- rsq_trad(test_preds, truth = truth, estimate = .pred)
 
-# R2 1:1
-# Fit the regression model of truth vs predictions
-lm_fit <- lm(truth ~ .pred, data = test_preds)
-# Residual sum of squares from regression model
-SSE_reg <- sum(resid(lm_fit)^2)
-# Residual sum of squares from 1:1 (slope = 1, intercept = 0)
-SSE_11 <- sum((test_preds$truth - test_preds$.pred)^2)
-# Compute R²₁:₁ as defined
-r2_11 <- 1 - SSE_reg / SSE_11
-
-df_pred <- test_preds %>% rename(Real = truth, Prediction = .pred)
-
 fmt <- function(x) formatC(x, digits = 2, format = "f")
 lab_r2    <- paste0('R^2 == ', fmt(rsq_tbl$.estimate))
-lab_r2_11 <- paste0('R["1:1"]^2 == ', fmt(r2_11))
+
 
 xr <- range(df_pred$Prediction); yr <- range(df_pred$Real)
 x_annot <- xr[1] + 0.60*diff(xr)
@@ -506,7 +494,7 @@ dy      <- 0.15*diff(yr)  # line spacing
 p2 <- ggplot(df_pred, aes(Prediction, Real)) +
   geom_point(color = "black", size = 1.6) +
   geom_smooth(method = "lm", se = FALSE, color = "green4", linewidth = 1.1) +
-  geom_abline(slope = 1, intercept = 0, color = "black") +
+ # geom_abline(slope = 1, intercept = 0, color = "black") +
   annotate("text", x = x_annot, y = y_annot,
            label = lab_r2, parse = TRUE, hjust = 0, vjust = 1,
            size = 4, color = "green4") +
